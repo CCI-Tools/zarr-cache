@@ -1,2 +1,3 @@
 # zarr-cache
-An experimental cache for Zarr chunks
+
+An experimental cache for multiple Zarr datasets.

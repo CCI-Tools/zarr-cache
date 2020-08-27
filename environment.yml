@@ -1,0 +1,16 @@
+name: zarr-cache
+channels:
+  - conda-forge
+dependencies:
+  # Runtime libs
+  - boto3>=1.14
+  - botocore>=1.17
+  - dask>=2.24
+  - numpy>=1.19
+  - s3fs>=0.4
+  - xarray>=0.16
+  - zarr>=2.4
+  # Test lib
+  - flake8
+  - pytest
+  - pytest-cov
