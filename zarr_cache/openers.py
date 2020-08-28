@@ -20,8 +20,23 @@
 # SOFTWARE.
 
 import collections
-from typing import Callable
+from typing import Dict
 
-# Store openers receive a store ID and return a MutableMapping.
-# The returned stores must be writable.
-StoreOpener = Callable[[str], collections.MutableMapping]
+from ._opener import StoreOpener
+
+
+def new_memory_store_opener(store_collection: Dict[str, collections.MutableMapping] = None) -> StoreOpener:
+    """
+    Create a new memory store opener.
+
+    :param store_collection: Optional dictionary in which the new stores will be kept.
+    :return: A new store opener.
+    """
+
+    def open_store(store_id):
+        store = dict()
+        if store_collection is not None:
+            store_collection[store_id] = store
+        return store
+
+    return open_store
