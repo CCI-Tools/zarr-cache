@@ -21,13 +21,18 @@
 
 import collections
 import threading
+import time
 import warnings
+from typing import Union, Callable
 
+import numpy as np
 import zarr.storage
 
 from ._index import StoreIndex
 from ._opener import StoreOpener
 from .util import close_store
+
+StoreItemFilter = Callable[[str, str, Union[bytes, np.ndarray], float], bool]
 
 
 # Note: Implementation borrowed partly from zarr.storage.LRUStoreCache
@@ -38,13 +43,18 @@ class StoreCache:
 
     :param store_index: The store index.
     :param store_opener: A callable that receives a *store_id* and returns a *store*.
+    :param store_item_filter: Filter function that, if given, is called to decide whether a value should be cached or
+        not. Its signature is ``store_item_filter(store_id, key, value, duration) -> bool``. If it returns True, a
+        value will be cached. If *store_item_filter* is not given, values will always be cached.
     """
 
     def __init__(self,
                  store_index: StoreIndex,
-                 store_opener: StoreOpener):
+                 store_opener: StoreOpener,
+                 store_item_filter: StoreItemFilter = None):
         self._store_index = store_index
         self._store_opener = store_opener
+        self._store_item_filter = store_item_filter
         self._open_stores = {}
         self._hits = 0
         self._misses = 0
@@ -81,7 +91,7 @@ class StoreCache:
         try:
             # first try to obtain the value from the cache
             with self._lock:
-                store = self._get_store(store_id)
+                store = self._get_or_open_store(store_id)
                 value = store[key]
                 # cache hit if no KeyError is raised
                 self._hits += 1
@@ -89,14 +99,22 @@ class StoreCache:
                 self._store_index.mark_key(store_id, key)
         except KeyError:
             # cache miss, retrieve value from the store
-            value = default_store[key]
-            with self._lock:
-                self._misses += 1
-                # need to check if key is not in the cache, as it may have been cached
-                # while we were retrieving the value from the store
-                store = self._get_store(store_id)
-                if key not in store:
-                    self.put_value(store_id, key, value)
+            if self._store_item_filter:
+                t0 = time.perf_counter()
+                value = default_store[key]
+                duration = time.perf_counter() - t0
+                should_cache = self._store_item_filter(store_id, key, value, duration)
+            else:
+                value = default_store[key]
+                should_cache = True
+            if should_cache:
+                with self._lock:
+                    self._misses += 1
+                    # need to check if key is not in the cache, as it may have been cached
+                    # while we were retrieving the value from the store
+                    store = self._get_or_open_store(store_id)
+                    if key not in store:
+                        self.put_value(store_id, key, value)
         return value
 
     def put_value(self, store_id: str, key: str, value: bytes):
@@ -108,20 +126,20 @@ class StoreCache:
         if max_size is None or value_size <= max_size:
             with self._lock:
                 self._accommodate_space(value_size)
-                store = self._get_store(store_id)
+                store = self._get_or_open_store(store_id)
                 store[key] = value
                 self._store_index.push_key(store_id, key, value_size)
 
     def delete_value(self, store_id: str, key: str):
         with self._lock:
-            store = self._get_store(store_id)
+            store = self._get_or_open_store(store_id)
             if key in store:
                 del store[key]
             self._store_index.delete_key(store_id, key)
 
     def clear_store(self, store_id: str):
         with self._lock:
-            store = self._get_store(store_id)
+            store = self._get_or_open_store(store_id)
             try:
                 store.clear()
                 self._store_index.delete_keys(store_id)
@@ -135,7 +153,7 @@ class StoreCache:
                 del self._open_stores[store_id]
                 close_store(store)
 
-    def _get_store(self, store_id: str) -> collections.MutableMapping:
+    def _get_or_open_store(self, store_id: str) -> collections.MutableMapping:
         if store_id not in self._open_stores:
             store = self._store_opener(store_id)
             self._open_stores[store_id] = store
@@ -149,7 +167,7 @@ class StoreCache:
         # ensure there is enough space in the cache for a new value
         while current_size + new_size > max_size:
             store_id, key, size = self._store_index.pop_key()
-            store = self._get_store(store_id)
+            store = self._get_or_open_store(store_id)
             try:
                 del store[key]
             except KeyError:

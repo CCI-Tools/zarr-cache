@@ -40,3 +40,28 @@ def new_memory_store_opener(store_collection: Dict[str, collections.MutableMappi
         return store
 
     return open_store
+
+
+def new_s3_store_opener(root_pattern: str = '${store_id}',
+                        s3: 's3fs.S3FileSystem' = None,
+                        **s3_kwargs) -> StoreOpener:
+    """
+    Create a new store opener in S3-compatible object storage.
+    Requires the packages ``s3fs`` and ``boto3`` to be installed.
+
+    :param root_pattern: A root path pattern that may contain the placeholder "${store_id}". Defaults to "${store_id}".
+    :param s3: Optional ``s3fs.S3FileSystem`` instance.
+    :param s3_kwargs: Keyword-arguments passed to ``s3fs.S3FileSystem`` constructor in case *s3* is not provided.
+    :return: A new store opener.
+    """
+    import s3fs
+
+    if s3 is None:
+        s3 = s3fs.S3FileSystem(**s3_kwargs)
+    elif s3_kwargs:
+        raise ValueError(f'unexpected keyword(s): {s3_kwargs}')
+
+    def open_store(store_id):
+        return s3fs.S3Map(root=root_pattern.format(store_id=store_id), s3=s3, check=False, create=True)
+
+    return open_store

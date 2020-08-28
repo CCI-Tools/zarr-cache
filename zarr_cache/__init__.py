@@ -19,6 +19,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+from ._cache import StoreItemFilter
 from ._cache import StoreOpener
 from ._index import StoreIndex
 from ._store import CacheStore

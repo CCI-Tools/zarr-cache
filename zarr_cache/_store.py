@@ -25,14 +25,13 @@ from typing import List
 import zarr.storage
 
 from ._cache import StoreCache
+from ._cache import StoreItemFilter
 from ._index import StoreIndex
 from ._opener import StoreOpener
 from .util import close_store
 
-Store = collections.MutableMapping
 
-
-class CacheStore(Store):
+class CacheStore(collections.MutableMapping):
     """
     A Zarr key-value store that wraps (decorates) another store so it can be cached in a
     multi-store cache whose keys are managed through the given *store_index*.
@@ -41,16 +40,28 @@ class CacheStore(Store):
     :param store: The original store to be cached.
     :param store_index: The store index.
     :param store_opener: Factory for writable cache stores.
+    :param store_item_filter: Filter function that, if given, is called to decide whether a value should be cached or
+        not. Its signature is ``store_item_filter(store_id, key, value, duration) -> bool``. If it returns True, a
+        value will be cached. If *store_item_filter* is not given, values will always be cached.
     """
 
     def __init__(self,
-                 store: Store,
+                 store: collections.MutableMapping,
                  store_id: str,
                  store_index: StoreIndex,
-                 store_opener: StoreOpener):
+                 store_opener: StoreOpener,
+                 store_item_filter: StoreItemFilter = None):
         self._store = store
         self._store_id = store_id
-        self._store_cache = StoreCache(store_index, store_opener)
+        self._store_cache = StoreCache(store_index, store_opener, store_item_filter)
+
+    @property
+    def hits(self) -> int:
+        return self._store_cache.hits
+
+    @property
+    def misses(self) -> int:
+        return self._store_cache.misses
 
     def __len__(self):
         """Gets the number of keys in the original store."""
