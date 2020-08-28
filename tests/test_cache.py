@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from zarr_cache.cache import StoreCache
+from zarr_cache._cache import StoreCache
 from zarr_cache.indexes import MemoryStoreIndex
 
 

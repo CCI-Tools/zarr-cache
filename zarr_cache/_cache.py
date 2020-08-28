@@ -22,14 +22,12 @@
 import collections
 import threading
 import warnings
-from typing import Callable, Any
 
 import zarr.storage
 
-from zarr_cache.index import StoreIndex
-
-Store = collections.MutableMapping
-StoreOpener = Callable[[str], Store]
+from ._index import StoreIndex
+from ._opener import StoreOpener
+from .util import close_store
 
 
 # Note: Implementation borrowed partly from zarr.storage.LRUStoreCache
@@ -79,7 +77,7 @@ class StoreCache:
     def misses(self) -> int:
         return self._misses
 
-    def get_value(self, store_id: str, key: str, default_store: Store) -> bytes:
+    def get_value(self, store_id: str, key: str, default_store: collections.MutableMapping) -> bytes:
         try:
             # first try to obtain the value from the cache
             with self._lock:
@@ -137,7 +135,7 @@ class StoreCache:
                 del self._open_stores[store_id]
                 close_store(store)
 
-    def _get_store(self, store_id: str) -> Store:
+    def _get_store(self, store_id: str) -> collections.MutableMapping:
         if store_id not in self._open_stores:
             store = self._store_opener(store_id)
             self._open_stores[store_id] = store
@@ -158,8 +156,3 @@ class StoreCache:
                 warnings.warn(f'Failed to delete key {key} from store {store_id}')
                 continue
             current_size -= size
-
-
-def close_store(store):
-    if hasattr(store, 'close') and callable(getattr(store, 'close')):
-        store.close()

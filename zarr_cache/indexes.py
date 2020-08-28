@@ -22,7 +22,7 @@
 from collections import OrderedDict
 from typing import Tuple, Optional
 
-from zarr_cache.index import StoreIndex
+from ._index import StoreIndex
 
 
 class MemoryStoreIndex(StoreIndex):

@@ -3,9 +3,8 @@ import unittest
 import xarray as xr
 
 from tests.helpers import make_test_cube
-from zarr_cache.cache import StoreCache
 from zarr_cache.indexes import MemoryStoreIndex
-from zarr_cache.store import StoreCacheStore
+from zarr_cache import CacheStore
 
 
 class StoreCacheStoreTest(unittest.TestCase):
@@ -25,8 +24,7 @@ class StoreCacheStoreTest(unittest.TestCase):
             return cached_store
 
         store_index = MemoryStoreIndex()
-        cache_store = StoreCacheStore(original_store, 'my_store', StoreCache(store_index,
-                                                                             store_opener))
+        cache_store = CacheStore(original_store, 'my_store', store_index, store_opener)
 
         cached_cube = xr.open_zarr(cache_store)
 

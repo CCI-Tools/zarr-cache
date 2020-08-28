@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 # The MIT License (MIT)
 # Copyright (c) 2020 by the ESA CCI Toolbox development team and contributors
 #
@@ -21,18 +19,9 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-from setuptools import setup
+import collections
+from typing import Callable
 
-# Same effect as "from cate import __version__", but avoids importing cate:
-__version__ = None
-with open('zarr_cache/_version.py') as f:
-    exec(f.read())
-
-setup(
-    name="zarr_cache",
-    version=__version__,
-    description='Zarr chunk cache',
-    license='MIT',
-    author='Cate Development Team',
-    packages=['zarr_cache'],
-)
+# Store openers receive a store ID and return a MutableMapping.
+# The returned stores must be writable.
+StoreOpener = Callable[[str], collections.MutableMapping]

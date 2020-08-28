@@ -20,33 +20,37 @@
 # SOFTWARE.
 
 import collections
-from typing import List, Any
+from typing import List
 
 import zarr.storage
 
-from zarr_cache.cache import StoreCache
-from zarr_cache.cache import close_store
+from ._cache import StoreCache
+from ._index import StoreIndex
+from ._opener import StoreOpener
+from .util import close_store
 
 Store = collections.MutableMapping
 
 
-class StoreCacheStore(Store):
+class CacheStore(Store):
     """
     A Zarr key-value store that wraps (decorates) another store so it can be cached in a
-    given store cache.
+    multi-store cache whose keys are managed through the given *store_index*.
 
     :param store_id: An identifier that uniquely identifies this store in the *store_cache*.
     :param store: The original store to be cached.
-    :param store_cache: The store cache.
+    :param store_index: The store index.
+    :param store_opener: Factory for writable cache stores.
     """
 
     def __init__(self,
                  store: Store,
                  store_id: str,
-                 store_cache: StoreCache):
+                 store_index: StoreIndex,
+                 store_opener: StoreOpener):
         self._store = store
         self._store_id = store_id
-        self._store_cache = store_cache
+        self._store_cache = StoreCache(store_index, store_opener)
 
     def __len__(self):
         """Gets the number of keys in the original store."""
