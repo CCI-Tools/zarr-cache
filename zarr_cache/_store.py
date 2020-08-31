@@ -20,24 +20,25 @@
 # SOFTWARE.
 
 import collections
-from typing import List
+import threading
+import time
+from typing import List, Optional, AbstractSet, Callable, Union
 
+import numpy as np
 import zarr.storage
 
-from ._cache import StoreCache
-from ._cache import StoreItemFilter
-from ._index import StoreIndex
-from ._opener import StoreOpener
 from .util import close_store
 
+StoreItemFilter = Callable[[str, Union[bytes, np.ndarray], float], bool]
 
-class CacheStore(collections.MutableMapping):
+
+class CachedStore(collections.MutableMapping):
     """
-    A Zarr key-value store that wraps (decorates) another store so it can be cached in a
+    A Zarr key-value store that wraps (decorates) an original store so it can be cached in a
     multi-store cache whose keys are managed through the given *store_index*.
 
-    :param store_id: An identifier that uniquely identifies this store in the *store_cache*.
-    :param store: The original store to be cached.
+    :param original_store: The original store to be cached.
+    :param cache_store: The original store to be cached.
     :param store_index: The store index.
     :param store_opener: Factory for writable cache stores.
     :param store_item_filter: Filter function that, if given, is called to decide whether a value should be cached or
@@ -46,48 +47,61 @@ class CacheStore(collections.MutableMapping):
     """
 
     def __init__(self,
-                 store: collections.MutableMapping,
-                 store_id: str,
-                 store_index: StoreIndex,
-                 store_opener: StoreOpener,
+                 original_store: collections.MutableMapping,
+                 cache_store: collections.MutableMapping,
                  store_item_filter: StoreItemFilter = None):
-        self._store = store
-        self._store_id = store_id
-        self._store_cache = StoreCache(store_index, store_opener, store_item_filter)
+        self._original_store = original_store
+        self._cache_store = cache_store
+        self._store_item_filter = store_item_filter
+        self._cached_keys: Optional[AbstractSet[str]] = None
+        self._lock = threading.RLock()
 
-    @property
-    def hits(self) -> int:
-        return self._store_cache.hits
+    def __getstate__(self):
+        return (
+            self._original_store,
+            self._cache_store,
+            self._store_item_filter,
+            self._cached_keys,
+        )
 
-    @property
-    def misses(self) -> int:
-        return self._store_cache.misses
+    def __setstate__(self, state):
+        (
+            self._original_store,
+            self._cache_store,
+            self._store_item_filter,
+            self._cached_keys,
+        ) = state
+        self._lock = threading.RLock()
 
     def __len__(self):
         """Gets the number of keys in the original store."""
-        return len(self._store)
+        return len(self._keys())
 
     def __iter__(self):
         """Iterates keys of the original store."""
-        return self.keys()
+        return iter(self._keys())
 
     def __contains__(self, key: str) -> bool:
         """Test whether *key* is in the original store."""
-        return key in self._store
+        return key in self._keys()
 
-    def keys(self):
+    def keys(self) -> AbstractSet[str]:
         """Get keys from the original store."""
-        return self._store.keys()
+        return self._keys()
 
     def clear(self):
         """Clear the original and cached store."""
-        self._store.clear()
-        self._store_cache.clear_store(self._store_id)
+        self._original_store.clear()
+        with self._lock:
+            self._cache_store.clear()
+            self._invalidate_keys()
 
     def close(self):
         """Closes the original store and the cached store."""
-        close_store(self._store)
-        self._store_cache.close_store(self._store_id)
+        close_store(self._original_store)
+        with self._lock:
+            close_store(self._original_store)
+            self._invalidate_keys()
 
     def __getitem__(self, key: str) -> bytes:
         """
@@ -96,29 +110,63 @@ class CacheStore(collections.MutableMapping):
         :param key: The key.
         :return: An original or cached value.
         """
-        return self._store_cache.get_value(self._store_id, key, self._store)
+        try:
+            return self._cache_store[key]
+        except KeyError:
+            if self._store_item_filter is not None:
+                now = time.perf_counter()
+                value = self._original_store[key]
+                should_cache = self._store_item_filter(key, value, time.perf_counter() - now)
+            else:
+                value = self._original_store[key]
+                should_cache = True
+        if should_cache:
+            with self._lock:
+                self._cache_store[key] = value
+                self._invalidate_keys()
 
     def __setitem__(self, key: str, value: bytes):
         """
-        Set *key* to *value*. Sets the value in the original store and the cached store.
+        Set *key* to *value*.
+        Sets the value in the original store.
+        Sets the value in the cache store, only if the value was already cached.
         :param key: The key.
         :param value: The value
         """
-        self._store[key] = value
-        self._store_cache.put_value(self._store_id, key, value)
+        self._original_store[key] = value
+        with self._lock:
+            if key in self._cache_store:
+                self._cache_store[key] = value
+                self._invalidate_keys()
 
     def __delitem__(self, key: str):
         """
-        Delete the value for *key*. Deletes the value from the original and cached store.
+        Delete the value for *key*.
+        Deletes the value from the original store and the cache store, if key exists.
         :param key: The key.
         """
-        del self._store[key]
-        self._store_cache.delete_value(self._store_id, key)
+        del self._original_store[key]
+        with self._lock:
+            try:
+                del self._cache_store[key]
+            except KeyError:
+                # Ok, key wasn't cached so far.
+                pass
+            self._invalidate_keys()
 
     def listdir(self, path: str = None) -> List[str]:
         """List the keys under *path*, if any, of the original store."""
-        return zarr.storage.listdir(self._store, path)
+        return zarr.storage.listdir(self._original_store, path)
 
     def getsize(self, path: str = None) -> int:
         """Get the size in bytes of all values under *path*, if any."""
-        return zarr.storage.getsize(self._store, path=path)
+        return zarr.storage.getsize(self._original_store, path=path)
+
+    def _keys(self) -> AbstractSet[str]:
+        """Get keys from the original store."""
+        if self._cached_keys is None:
+            self._cached_keys = self._original_store.keys()
+        return self._cached_keys
+
+    def _invalidate_keys(self):
+        self._cached_keys = None

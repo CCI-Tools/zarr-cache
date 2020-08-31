@@ -7,7 +7,7 @@ import zarr.storage
 
 from xcube_cci.cciodp import CciOdp
 from xcube_cci.chunkstore import CciChunkStore
-from zarr_cache import CacheStore
+from zarr_cache import CachedStore
 from zarr_cache.indexes import MemoryStoreIndex
 
 odp = CciOdp()
@@ -34,9 +34,9 @@ def store_opener(store_id: str) -> collections.MutableMapping:
 
 store_index = MemoryStoreIndex()
 
-ozone_1_store = CacheStore(original_store, "ozone_1", store_index=store_index, store_opener=store_opener)
-ozone_2_store = CacheStore(original_store, "ozone_2", store_index=store_index, store_opener=store_opener)
-ozone_3_store = CacheStore(original_store, "ozone_3", store_index=store_index, store_opener=store_opener)
+ozone_1_store = CachedStore(original_store, "ozone_1", store_index=store_index, store_opener=store_opener)
+ozone_2_store = CachedStore(original_store, "ozone_2", store_index=store_index, store_opener=store_opener)
+ozone_3_store = CachedStore(original_store, "ozone_3", store_index=store_index, store_opener=store_opener)
 
 
 ozone_1_ds = xr.open_zarr(ozone_1_store)

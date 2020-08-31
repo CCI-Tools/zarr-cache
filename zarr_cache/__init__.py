@@ -22,5 +22,5 @@
 from ._cache import StoreItemFilter
 from ._cache import StoreOpener
 from ._index import StoreIndex
-from ._store import CacheStore
+from ._store import CachedStore
 from ._version import __version__

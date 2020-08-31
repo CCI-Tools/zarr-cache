@@ -4,7 +4,7 @@ import xarray as xr
 import zarr.storage
 
 from tests.helpers import make_test_cube
-from zarr_cache import CacheStore
+from zarr_cache import CachedStore
 from zarr_cache.indexes import MemoryStoreIndex
 from zarr_cache.openers import new_memory_store_opener
 
@@ -28,7 +28,7 @@ class StoreCacheStoreTest(unittest.TestCase):
         store_opener = new_memory_store_opener(store_collection=cached_stores)
 
         store_index = MemoryStoreIndex(max_size=cube_size // 2)
-        cache_store = CacheStore(original_store, 'my_store', store_index, store_opener)
+        cache_store = CachedStore(original_store, 'my_store', store_index, store_opener)
 
         self.assertEqual(0, cache_store.misses)
         self.assertEqual(0, cache_store.hits)
