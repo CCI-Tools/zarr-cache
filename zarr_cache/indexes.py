@@ -62,16 +62,20 @@ class MemoryStoreIndex(StoreIndex):
 
     def mark_key(self, store_id: str, key: str):
         # Move key to top
-        self._entries.move_to_end((store_id, key), last=self._is_lifo)
+        k = store_id, key
+        if k in self._entries:
+            self._entries.move_to_end((store_id, key), last=self._is_lifo)
 
     def delete_key(self, store_id: str, key: str) -> int:
         k = store_id, key
-        size = self._entries[k]
-        del self._entries[k]
-        self._current_size -= size
-        return size
+        if k in self._entries:
+            size = self._entries[k]
+            del self._entries[k]
+            self._current_size -= size
+            return size
+        return 0
 
-    def delete_keys(self, store_id: str):
+    def delete_store(self, store_id: str):
         k_list = [k for k in self._entries.keys() if k[0] == store_id]
         size_sum = 0
         for k in k_list:

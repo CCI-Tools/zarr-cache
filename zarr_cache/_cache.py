@@ -19,54 +19,112 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+import abc
 import collections
 import threading
-import time
 import warnings
-from typing import Union, Callable
 
-import numpy as np
 import zarr.storage
 
 from ._index import StoreIndex
 from ._opener import StoreOpener
 from .util import close_store
 
-StoreItemFilter = Callable[[str, str, Union[bytes, np.ndarray], float], bool]
 
-
-# Note: Implementation borrowed partly from zarr.storage.LRUStoreCache
-
-class StoreCache:
+class StoreCache(abc.ABC):
     """
     A cache for a collection of stores.
+    """
+
+    @abc.abstractmethod
+    def has_value(self, store_id: str, key: str) -> bool:
+        """
+        Tests whether a value exists.
+
+        :param store_id: The store identifier.
+        :param key: The key.
+        :return: True, if the is a value for the given key.
+        """
+
+    @abc.abstractmethod
+    def get_value(self, store_id: str, key: str) -> bytes:
+        """
+        Get a value from the cache.
+
+        :param store_id: The store identifier.
+        :param key: The key.
+        :return: The value.
+        :raise ValueError: If the key does not exists.
+        """
+
+    @abc.abstractmethod
+    def put_value(self, store_id: str, key: str, value: bytes):
+        """
+        Put a value into the cache.
+
+        :param store_id: The store identifier.
+        :param key: The key.
+        :param value: The value.
+        """
+
+    @abc.abstractmethod
+    def delete_value(self, store_id: str, key: str) -> bool:
+        """
+        Delete a value from the cache.
+
+        :param store_id: The store identifier.
+        :param key: The key.
+        :return: True, if the value existed and could be deleted, False otherwise.
+        """
+
+    @abc.abstractmethod
+    def clear_store(self, store_id: str):
+        """
+        Clear the store given by *store_id*. Removes the given store entirely.
+
+        :param store_id: The store identifier.
+        """
+
+    @abc.abstractmethod
+    def close_store(self, store_id: str):
+        """
+        Clear the store given by *store_id*.
+
+        :param store_id: The store identifier.
+        """
+
+
+class DefaultStoreCache(StoreCache):
+    """
+    A StoreCache implementation that uses
+    a store index to manage a cache's keys and
+    a store opener to open cached stores from their external representation.
+
+    Manipulations of the opened stores and the index are synchronized via a mutex.
+    Note that the keys in the index and the key-values in the external store may still run out of sync
+    if manipulated by multiple concurrent processes.
 
     :param store_index: The store index.
-    :param store_opener: A callable that receives a *store_id* and returns a *store*.
-    :param store_item_filter: Filter function that, if given, is called to decide whether a value should be cached or
-        not. Its signature is ``store_item_filter(store_id, key, value, duration) -> bool``. If it returns True, a
-        value will be cached. If *store_item_filter* is not given, values will always be cached.
+    :param store_opener: The store opener. Must be a callable that receives a *store_id* and
+        returns a ``collections.MutableMapping``.
     """
 
     def __init__(self,
                  store_index: StoreIndex,
-                 store_opener: StoreOpener,
-                 store_item_filter: StoreItemFilter = None):
+                 store_opener: StoreOpener):
         self._store_index = store_index
         self._store_opener = store_opener
-        self._store_item_filter = store_item_filter
         self._open_stores = {}
-        self._hits = 0
-        self._misses = 0
-        self._lock = threading.RLock()
+        # Fetch max_size as this will be frequently required
+        self._max_size = self._store_index.max_size
+        self._mutex = threading.Lock()
 
     def __getstate__(self):
         return (
             self._store_index,
             self._store_opener,
             self._open_stores,
-            self._hits,
-            self._misses
+            self._max_size,
         )
 
     def __setstate__(self, state):
@@ -74,80 +132,56 @@ class StoreCache:
             self._store_index,
             self._store_opener,
             self._open_stores,
-            self._hits,
-            self._misses
+            self._max_size,
         ) = state
-        self._lock = threading.RLock()
+        self._mutex = threading.Lock()
 
-    @property
-    def hits(self) -> int:
-        return self._hits
+    def has_value(self, store_id: str, key: str) -> bool:
+        with self._mutex:
+            return key in self._get_or_open_store(store_id)
 
-    @property
-    def misses(self) -> int:
-        return self._misses
-
-    def get_value(self, store_id: str, key: str, default_store: collections.MutableMapping) -> bytes:
-        try:
-            # first try to obtain the value from the cache
-            with self._lock:
-                store = self._get_or_open_store(store_id)
-                value = store[key]
-                # cache hit if no KeyError is raised
-                self._hits += 1
-                # treat the end as most recently used
-                self._store_index.mark_key(store_id, key)
-        except KeyError:
-            # cache miss, retrieve value from the store
-            if self._store_item_filter:
-                t0 = time.perf_counter()
-                value = default_store[key]
-                duration = time.perf_counter() - t0
-                should_cache = self._store_item_filter(store_id, key, value, duration)
-            else:
-                value = default_store[key]
-                should_cache = True
-            if should_cache:
-                with self._lock:
-                    self._misses += 1
-                    # need to check if key is not in the cache, as it may have been cached
-                    # while we were retrieving the value from the store
-                    store = self._get_or_open_store(store_id)
-                    if key not in store:
-                        self.put_value(store_id, key, value)
-        return value
+    def get_value(self, store_id: str, key: str) -> bytes:
+        # first try to obtain the value from the cache
+        with self._mutex:
+            store = self._get_or_open_store(store_id)
+            value = store[key]
+            # treat the end as most recently used
+            self._store_index.mark_key(store_id, key)
+            return value
 
     def put_value(self, store_id: str, key: str, value: bytes):
         # print(f'put_value: key={key}, typeof value={type(value)}')
         value_size = zarr.storage.buffer_size(value)
         # check size of the value against max size, as if the value itself exceeds max
         # size then we are never going to cache it
-        max_size = self._store_index.max_size
-        if max_size is None or value_size <= max_size:
-            with self._lock:
+        if self._max_size is None or value_size <= self._max_size:
+            with self._mutex:
                 self._accommodate_space(value_size)
                 store = self._get_or_open_store(store_id)
                 store[key] = value
                 self._store_index.push_key(store_id, key, value_size)
 
-    def delete_value(self, store_id: str, key: str):
-        with self._lock:
+    def delete_value(self, store_id: str, key: str) -> bool:
+        with self._mutex:
+            res = False
             store = self._get_or_open_store(store_id)
             if key in store:
                 del store[key]
+                res = True
             self._store_index.delete_key(store_id, key)
+            return res
 
     def clear_store(self, store_id: str):
-        with self._lock:
+        with self._mutex:
             store = self._get_or_open_store(store_id)
             try:
                 store.clear()
-                self._store_index.delete_keys(store_id)
+                self._store_index.delete_store(store_id)
             finally:
                 close_store(store)
 
     def close_store(self, store_id: str):
-        with self._lock:
+        with self._mutex:
             if store_id in self._open_stores:
                 store = self._open_stores[store_id]
                 del self._open_stores[store_id]
@@ -160,12 +194,11 @@ class StoreCache:
         return self._open_stores[store_id]
 
     def _accommodate_space(self, new_size: int):
-        max_size = self._store_index.max_size
-        if max_size is None:
+        if self._max_size is None:
             return
         current_size = self._store_index.current_size
         # ensure there is enough space in the cache for a new value
-        while current_size + new_size > max_size:
+        while current_size + new_size > self._max_size:
             store_id, key, size = self._store_index.pop_key()
             store = self._get_or_open_store(store_id)
             try:

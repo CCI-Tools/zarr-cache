@@ -75,7 +75,7 @@ class StoreIndex(abc.ABC):
         """
 
     @abc.abstractmethod
-    def delete_keys(self, store_id: str) -> int:
+    def delete_store(self, store_id: str) -> int:
         """
         Delete all keys belonging to given store.
         :param store_id: The store identifier.
