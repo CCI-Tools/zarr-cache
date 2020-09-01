@@ -4,7 +4,7 @@ import xarray as xr
 import zarr.storage
 
 from tests.helpers import make_test_cube
-from zarr_cache import CachedStore
+from zarr_cache import CachedStore, DefaultStoreCache
 from zarr_cache.indexes import MemoryStoreIndex
 from zarr_cache.openers import new_memory_store_opener
 
@@ -28,21 +28,21 @@ class StoreCacheStoreTest(unittest.TestCase):
         store_opener = new_memory_store_opener(store_collection=cached_stores)
 
         store_index = MemoryStoreIndex(max_size=cube_size // 2)
-        cache_store = CachedStore(original_store, 'my_store', store_index, store_opener)
+        cache_store = CachedStore(original_store, 'my_store', DefaultStoreCache(store_index, store_opener))
 
-        self.assertEqual(0, cache_store.misses)
-        self.assertEqual(0, cache_store.hits)
+        self.assertEqual(0, cache_store.miss_count)
+        self.assertEqual(0, cache_store.hit_count)
 
         cached_cube = xr.open_zarr(cache_store)
 
-        self.assertTrue(cache_store.misses < cube_key_count // 2)
-        self.assertTrue(cache_store.hits < cube_key_count // 2)
+        self.assertTrue(cache_store.miss_count < cube_key_count // 2)
+        self.assertTrue(cache_store.hit_count < cube_key_count // 2)
 
         output_store = dict()
         cached_cube.to_zarr(output_store)
 
-        self.assertTrue(cache_store.misses > cube_key_count // 2)
-        self.assertTrue(cache_store.hits > cube_key_count // 2)
+        self.assertTrue(cache_store.miss_count > cube_key_count // 2)
+        self.assertTrue(cache_store.hit_count > cube_key_count // 2)
 
         self.assertEqual(set(original_store.keys()), set(output_store.keys()))
 

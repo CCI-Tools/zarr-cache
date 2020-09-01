@@ -10,6 +10,7 @@ from tests.helpers import make_test_cube
 STORE_NAME = 'store.zarr'
 
 
+@unittest.skip('Run this to check how xarray opens a zarr that comprises groups only')
 class ZarrTest(unittest.TestCase):
 
     def setUp(self) -> None:

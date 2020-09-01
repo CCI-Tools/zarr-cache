@@ -44,11 +44,11 @@ class MemoryStoreIndexTest(unittest.TestCase):
         self.assertEqual(220, s)
         self.assertEqual(100 + 130, index.current_size)
 
-        s = index.delete_keys('s1')
+        s = index.delete_store('s1')
         self.assertEqual(100 + 130, s)
         self.assertEqual(0, index.current_size)
 
-        s = index.delete_keys('s2')
+        s = index.delete_store('s2')
         self.assertEqual(0, s)
         self.assertEqual(0, index.current_size)
 
@@ -91,10 +91,10 @@ class MemoryStoreIndexTest(unittest.TestCase):
         self.assertEqual(220, s)
         self.assertEqual(260 + 210, index.current_size)
 
-        s = index.delete_keys('s1')
+        s = index.delete_store('s1')
         self.assertEqual(0, s)
         self.assertEqual(260 + 210, index.current_size)
 
-        s = index.delete_keys('s2')
+        s = index.delete_store('s2')
         self.assertEqual(260 + 210, s)
         self.assertEqual(0, index.current_size)
