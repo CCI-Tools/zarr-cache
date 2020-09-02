@@ -35,7 +35,9 @@ store_cache = DefaultStoreCache(store_index=store_index, store_opener=store_open
 
 
 def open_cached_dataset(ds_id):
+    md = odp.get_dataset_metadata(ds_id)
+    time_range = md['temporal_coverage_start'], md['temporal_coverage_end']
     variable_names = odp.var_names(ds_id)
-    original_store = CciChunkStore(odp, ds_id, dict(variable_names=variable_names))
+    original_store = CciChunkStore(odp, ds_id, dict(variable_names=variable_names, time_range=time_range))
     cached_store = CachedStore(original_store, ds_id, store_cache)
     return xr.open_zarr(cached_store)
