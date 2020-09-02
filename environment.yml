@@ -5,12 +5,12 @@ dependencies:
   # Runtime libs
   - boto3>=1.14
   - botocore>=1.17
-  - dask>=2.24
   - numpy>=1.19
   - s3fs>=0.4
-  - xarray>=0.16
   - zarr>=2.4
-  # Test lib
+  # Test dependencies
+  - dask>=2.24
+  - xarray>=0.16
   - flake8
   - pytest
   - pytest-cov
