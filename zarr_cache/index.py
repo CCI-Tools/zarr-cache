@@ -20,6 +20,7 @@
 # SOFTWARE.
 
 import abc
+from collections import OrderedDict
 from typing import Tuple, Optional
 
 
@@ -81,3 +82,61 @@ class StoreIndex(abc.ABC):
         :param store_id: The store identifier.
         :return: The sum of sizes associated with the deleted keys
         """
+
+
+class MemoryStoreIndex(StoreIndex):
+    """
+    An in-memory store index implementation.
+    Used for testing and as implementation reference only.
+    Production indexes should be persistent and backed by a database such as Redis.
+
+    :param is_lifo: Whether push/pop operate as LIFO or FIFO stack.
+    :param max_size: optional maximum size.
+    """
+
+    def __init__(self, is_lifo: bool = True, max_size: int = None):
+        self._is_lifo = is_lifo
+        self._max_size = max_size
+        self._current_size = 0
+        self._entries = OrderedDict()
+
+    @property
+    def max_size(self) -> Optional[int]:
+        return self._max_size
+
+    @property
+    def current_size(self) -> int:
+        return self._current_size
+
+    def push_key(self, store_id: str, key: str, size: int):
+        # Push key on top
+        self._entries[(store_id, key)] = size
+        self._current_size += size
+
+    def pop_key(self) -> Tuple[str, str, int]:
+        # Pop key from bottom
+        (store_id, key), size = self._entries.popitem(last=not self._is_lifo)
+        self._current_size -= size
+        return store_id, key, size
+
+    def mark_key(self, store_id: str, key: str):
+        # Move key to top
+        k = store_id, key
+        if k in self._entries:
+            self._entries.move_to_end((store_id, key), last=self._is_lifo)
+
+    def delete_key(self, store_id: str, key: str) -> int:
+        k = store_id, key
+        if k in self._entries:
+            size = self._entries[k]
+            del self._entries[k]
+            self._current_size -= size
+            return size
+        return 0
+
+    def delete_store(self, store_id: str):
+        k_list = [k for k in self._entries.keys() if k[0] == store_id]
+        size_sum = 0
+        for k in k_list:
+            size_sum += self.delete_key(k[0], k[1])
+        return size_sum

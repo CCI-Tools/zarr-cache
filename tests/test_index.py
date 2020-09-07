@@ -1,6 +1,6 @@
 import unittest
 
-from zarr_cache.indexes import MemoryStoreIndex
+from zarr_cache import MemoryStoreIndex
 
 
 class MemoryStoreIndexTest(unittest.TestCase):

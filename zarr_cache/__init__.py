@@ -19,10 +19,14 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-from ._cache import DefaultStoreCache
-from ._cache import StoreCache
-from ._index import StoreIndex
-from ._opener import StoreOpener
-from ._store import CachedStore
-from ._store import StoreItemFilter
-from ._version import __version__
+from .index import MemoryStoreIndex
+from .index import StoreIndex
+from .opener import MemoryStoreOpener
+from .opener import S3StoreOpener
+from .opener import StoreOpener
+from .storage import CacheStorage
+from .storage import IndexedCacheStorage
+from .storage import MemoryCacheStorage
+from .store import CachedStore
+from .store import StoreItemFilter
+from .version import __version__

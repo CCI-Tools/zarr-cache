@@ -27,7 +27,7 @@ from typing import List, Optional, AbstractSet, Callable, Union
 import numpy as np
 import zarr.storage
 
-from ._cache import StoreCache
+from .storage import CacheStorage
 from .util import close_store
 
 StoreItemFilter = Callable[[str, Union[bytes, np.ndarray], float], bool]
@@ -38,24 +38,26 @@ _nan = float('nan')
 class CachedStore(collections.MutableMapping):
     """
     A Zarr key-value store that wraps (decorates) an original store so it can be cached together with other
-    stores in in a multi-store cache.
+    stores in some performant cache storage.
 
     :param original_store: The original store to be cached.
     :param store_id: The store identifier. Must be unique within the stores managed by *store_cache*.
-    :param store_cache: The multi-store cache. Must implement the :class:StoreCache protocol.
-    :param store_item_filter: Filter function that, if given, is called to decide whether a value should be cached or
-        not. Its signature is ``store_item_filter(store_id, key, value, duration) -> bool``. If it returns True, a
-        value will be cached. If *store_item_filter* is not given, values will always be cached.
+    :param cache_storage: The multi-store cache storage. Must implement the :class:CacheStorage protocol.
+    :param store_item_filter: Filter function that, if given, is called to decide whether a
+        value should be cached or not.
+        Its signature is ``store_item_filter(store_id, key, value, duration) -> bool``.
+        If it returns True, a value will be cached. If *store_item_filter* is not given, values will
+        always be cached.
     """
 
     def __init__(self,
                  original_store: collections.MutableMapping,
                  store_id: str,
-                 store_cache: StoreCache,
+                 cache_storage: CacheStorage,
                  store_item_filter: StoreItemFilter = None):
         self._store = original_store
         self._store_id = store_id
-        self._store_cache = store_cache
+        self._cache_storage = cache_storage
         self._store_item_filter = store_item_filter
         self._cached_keys: Optional[AbstractSet[str]] = None
         self._hit_count = 0
@@ -68,7 +70,7 @@ class CachedStore(collections.MutableMapping):
         return (
             self._store,
             self._store_id,
-            self._store_cache,
+            self._cache_storage,
             self._store_item_filter,
             self._cached_keys,
             self._hit_count,
@@ -81,7 +83,7 @@ class CachedStore(collections.MutableMapping):
         (
             self._store,
             self._store_id,
-            self._store_cache,
+            self._cache_storage,
             self._store_item_filter,
             self._cached_keys,
             self._hit_count,
@@ -131,14 +133,14 @@ class CachedStore(collections.MutableMapping):
         """Clear the original and cached store."""
         self._store.clear()
         with self._lock:
-            self._store_cache.clear_store(self._store_id)
+            self._cache_storage.delete_store(self._store_id)
             self._invalidate_keys()
 
     def close(self):
         """Closes the original store and the cached store."""
         close_store(self._store)
         with self._lock:
-            self._store_cache.close_store(self._store_id)
+            self._cache_storage.close_store(self._store_id)
             self._invalidate_keys()
 
     def __getitem__(self, key: str) -> bytes:
@@ -150,7 +152,7 @@ class CachedStore(collections.MutableMapping):
         """
         try:
             now = time.perf_counter()
-            value = self._store_cache.get_value(self._store_id, key)
+            value = self._cache_storage.get_value(self._store_id, key)
             latency = time.perf_counter() - now
             self._hit_latency_sum += latency
             self._hit_count += 1
@@ -168,7 +170,7 @@ class CachedStore(collections.MutableMapping):
                 should_cache = True
             if should_cache:
                 with self._lock:
-                    self._store_cache.put_value(self._store_id, key, value)
+                    self._cache_storage.put_value(self._store_id, key, value)
                     self._invalidate_keys()
             return value
 
@@ -182,8 +184,8 @@ class CachedStore(collections.MutableMapping):
         """
         self._store[key] = value
         with self._lock:
-            if self._store_cache.has_value(self._store_id, key):
-                self._store_cache.put_value(self._store_id, key, value)
+            if self._cache_storage.has_value(self._store_id, key):
+                self._cache_storage.put_value(self._store_id, key, value)
                 self._invalidate_keys()
 
     def __delitem__(self, key: str):
@@ -194,7 +196,7 @@ class CachedStore(collections.MutableMapping):
         """
         del self._store[key]
         with self._lock:
-            self._store_cache.delete_value(self._store_id, key)
+            self._cache_storage.delete_value(self._store_id, key)
             self._invalidate_keys()
 
     def listdir(self, path: str = None) -> List[str]:

@@ -23,23 +23,25 @@ import abc
 import collections
 import threading
 import warnings
+from typing import Dict, Optional
 
 import zarr.storage
 
-from ._index import StoreIndex
-from ._opener import StoreOpener
+from .index import StoreIndex
+from .opener import MemoryStoreOpener
+from .opener import StoreOpener
 from .util import close_store
 
 
-class StoreCache(abc.ABC):
+class CacheStorage(abc.ABC):
     """
-    A cache for a collection of stores.
+    Represents the storage for a cache for multiple stores.
     """
 
     @abc.abstractmethod
     def has_value(self, store_id: str, key: str) -> bool:
         """
-        Tests whether a value exists.
+        Tests whether a value exists in a store in the cache storage.
 
         :param store_id: The store identifier.
         :param key: The key.
@@ -49,18 +51,18 @@ class StoreCache(abc.ABC):
     @abc.abstractmethod
     def get_value(self, store_id: str, key: str) -> bytes:
         """
-        Get a value from the cache.
+        Get a value from a store in the cache storage.
 
         :param store_id: The store identifier.
         :param key: The key.
         :return: The value.
-        :raise ValueError: If the key does not exists.
+        :raise KeyError: If the key does not exists.
         """
 
     @abc.abstractmethod
     def put_value(self, store_id: str, key: str, value: bytes):
         """
-        Put a value into the cache.
+        Put a value into a store in the cache storage.
 
         :param store_id: The store identifier.
         :param key: The key.
@@ -70,7 +72,7 @@ class StoreCache(abc.ABC):
     @abc.abstractmethod
     def delete_value(self, store_id: str, key: str) -> bool:
         """
-        Delete a value from the cache.
+        Delete a value from a store in the cache storage.
 
         :param store_id: The store identifier.
         :param key: The key.
@@ -78,9 +80,10 @@ class StoreCache(abc.ABC):
         """
 
     @abc.abstractmethod
-    def clear_store(self, store_id: str):
+    def delete_store(self, store_id: str):
         """
-        Clear the store given by *store_id*. Removes the given store entirely.
+        Clear the store given by *store_id* in the cache storage.
+        Removes the given store entirely.
 
         :param store_id: The store identifier.
         """
@@ -94,15 +97,75 @@ class StoreCache(abc.ABC):
         """
 
 
-class DefaultStoreCache(StoreCache):
+class MemoryCacheStorage(CacheStorage):
     """
-    A StoreCache implementation that uses
+    A CacheStorage implementation that uses plain dictionary instances as storage.
+    Should be used for testing only.
+
+    :param stores: optional dictionary that will hold the stores.
+    :param store_opener: Optional store opener. Must be a callable that receives a *store_id* and
+        returns a ``collections.MutableMapping``. If not given, new dictionary instances will be created.
+    """
+
+    def __init__(self,
+                 stores: Dict[str, Dict[str, bytes]] = None,
+                 store_opener: StoreOpener = None):
+        self._stores: Dict[str, Dict[str, bytes]] = stores if stores is not None else dict()
+        self._store_opener = store_opener or MemoryStoreOpener()
+
+    @property
+    def stores(self) -> Optional[collections.MutableMapping]:
+        return self._stores
+
+    @property
+    def store_opener(self) -> Optional[StoreOpener]:
+        return self._store_opener
+
+    def has_value(self, store_id: str, key: str) -> bool:
+        return store_id in self._stores and key in self._stores[store_id]
+
+    def get_value(self, store_id: str, key: str) -> bytes:
+        return self._stores[store_id][key]
+
+    def put_value(self, store_id: str, key: str, value: bytes):
+        if store_id not in self._stores:
+            self._stores[store_id] = self._store_opener(store_id) if self._store_opener is not None else dict()
+        self._stores[store_id][key] = value
+
+    def delete_value(self, store_id: str, key: str) -> bool:
+        try:
+            del self._stores[store_id][key]
+            return True
+        except KeyError:
+            return False
+
+    def delete_store(self, store_id: str):
+        self.close_store(store_id)
+        if store_id in self._stores:
+            del self._stores[store_id]
+
+    def close_store(self, store_id: str):
+        if store_id in self._stores:
+            close_store(self._stores[store_id])
+
+
+class IndexedCacheStorage(CacheStorage):
+    """
+    A CacheStorage implementation that uses
     a store index to manage a cache's keys and
-    a store opener to open cached stores from their external representation.
+    a store opener to open stores from the cache storage.
+
+    It is expected that the given *store_index* provides efficient means to
+    iterate and lookup the used key in the cache. The opened stores
+    from the *store_opener* are used to retrieve and store the actual values.
+
+    Note that because the store opener opens partly cached stores,
+    they may not represent valid Zarr groups, e.g. the ".zgroup" or ".zarray"
+    keys may not (yet) be present.
 
     Manipulations of the opened stores and the index are synchronized via a mutex.
-    Note that the keys in the index and the key-values in the external store may still run out of sync
-    if manipulated by multiple concurrent processes.
+    The keys in the index and the key-values in the external store may still run
+    out of sync if manipulated by multiple concurrent processes.
 
     :param store_index: The store index.
     :param store_opener: The store opener. Must be a callable that receives a *store_id* and
@@ -118,6 +181,14 @@ class DefaultStoreCache(StoreCache):
         # Fetch max_size as this will be frequently required
         self._max_size = self._store_index.max_size
         self._mutex = threading.Lock()
+
+    @property
+    def store_index(self) -> StoreIndex:
+        return self._store_index
+
+    @property
+    def store_opener(self) -> StoreOpener:
+        return self._store_opener
 
     def __getstate__(self):
         return (
@@ -171,7 +242,7 @@ class DefaultStoreCache(StoreCache):
             self._store_index.delete_key(store_id, key)
             return res
 
-    def clear_store(self, store_id: str):
+    def delete_store(self, store_id: str):
         with self._mutex:
             store = self._get_or_open_store(store_id)
             try:

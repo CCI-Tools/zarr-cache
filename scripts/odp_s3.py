@@ -1,13 +1,11 @@
-import collections
-
 import s3fs
 import xarray as xr
 
 from xcube_cci.cciodp import CciOdp
 from xcube_cci.chunkstore import CciChunkStore
-from zarr_cache import CachedStore
-from zarr_cache import DefaultStoreCache
-from zarr_cache.indexes import MemoryStoreIndex
+from zarr_cache import CachedStore, S3StoreOpener
+from zarr_cache import IndexedCacheStorage
+from zarr_cache import MemoryStoreIndex
 
 odp = CciOdp()
 
@@ -24,20 +22,13 @@ s3 = s3fs.S3FileSystem()
 if not s3.isdir(bucket_name):
     s3.mkdir(bucket_name)
 
-
-def store_opener(store_id: str) -> collections.MutableMapping:
-    return s3fs.S3Map(f"{bucket_name}/{store_id}.zarr", s3, check=False, create=True)
-
-
 store_index = MemoryStoreIndex()
 
-store_cache = DefaultStoreCache(store_index=store_index, store_opener=store_opener)
+store_cache = IndexedCacheStorage(store_index=store_index,
+                                  store_opener=S3StoreOpener(bucket_name + "/{store_id}.zarr", s3=s3))
 
 
 def open_cached_dataset(ds_id):
-    md = odp.get_dataset_metadata(ds_id)
-    time_range = md['temporal_coverage_start'], md['temporal_coverage_end']
-    variable_names = odp.var_names(ds_id)
-    original_store = CciChunkStore(odp, ds_id, dict(variable_names=variable_names, time_range=time_range))
+    original_store = CciChunkStore(odp, ds_id)
     cached_store = CachedStore(original_store, ds_id, store_cache)
     return xr.open_zarr(cached_store)

@@ -25,7 +25,7 @@ from setuptools import setup
 
 # Same effect as "from cate import __version__", but avoids importing cate:
 __version__ = None
-with open('zarr_cache/_version.py') as f:
+with open('zarr_cache/version.py') as f:
     exec(f.read())
 
 setup(
