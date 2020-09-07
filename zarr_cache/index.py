@@ -84,11 +84,44 @@ class StoreIndex(abc.ABC):
         """
 
 
+class RedisStoreIndex(StoreIndex):
+    """
+    A store index implementation with Redis as backend.
+    """
+
+    @classmethod
+    def create_index(cls, max_size: int):
+        raise NotImplementedError()
+
+    @property
+    def max_size(self) -> int:
+        raise NotImplementedError()
+
+    @property
+    def current_size(self) -> int:
+        raise NotImplementedError()
+
+    def push_key(self, store_id: str, key: str, size: int):
+        raise NotImplementedError()
+
+    def pop_key(self) -> Tuple[str, str, int]:
+        pass
+
+    def mark_key(self, store_id: str, key: str):
+        pass
+
+    def delete_key(self, store_id: str, key: str) -> int:
+        raise NotImplementedError()
+
+    def delete_store(self, store_id: str) -> int:
+        raise NotImplementedError()
+
+
 class MemoryStoreIndex(StoreIndex):
     """
     An in-memory store index implementation.
     Used for testing and as implementation reference only.
-    Production indexes should be persistent and backed by a database such as Redis.
+    Production indexes should be persistent and backed by a database such as Redis, see :class:RedisStoreIndex.
 
     :param is_lifo: Whether push/pop operate as LIFO or FIFO stack.
     :param max_size: optional maximum size.
