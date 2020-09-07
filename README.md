@@ -28,6 +28,8 @@ Programming model:
 ```python
     from collections.abc import MutableMapping
 
+    import xarray
+
     from zarr_cache import CachedStore
     from zarr_cache import S3StoreOpener
     from zarr_cache import MemoryStoreIndex
@@ -48,7 +50,7 @@ Programming model:
     my_slow_store = open_my_slow_store(my_store_id, ...) 
     my_faster_store = wrap_store(my_slow_store, my_store_id)
     
-    
+    dataset = xarray.open_zarr(my_faster_store)
 ```
 
 
