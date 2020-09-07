@@ -4,11 +4,22 @@ An experimental cache for multiple Zarr datasets.
 
 ## Idea
 
-Suppose we read Zarr chunks from some slow API. The API access is 
-implemented as a `collections.abc.MutableMapping`.
+Suppose we read Zarr array chunks from some slow data API. The API access is 
+implemented as store of type `collections.abc.MutableMapping`. And 
+assumed we have much faster storage, for example some high performance 
+S3-compatible object storage. Then it would make sense to use the 
+object storage as a cache for the array chunks retrieved by the slow API store.
 
-Assumed we have much faster storage, for example some high performance 
-S3-compatible object storage. 
+However, caching requires efficient management of the possibly very large number 
+of keys in the cache. Enumerating and sorting of keys, pushing and popping of 
+keys should be very fast operations. We'd also like to associate cache-specific
+values which each key e.g. access frequency, access duration, chunk sizes, etc. 
+The object storage may not be an ideal candidate provide that capabilities very well.
+
+The design used in this library therefore splits the cache storage into 
+ 
+1. an index of cached keys, e.g. a Redis database; 
+2. a storage for the cached array chunks, e.g. S3.
 
 ## Usage
 

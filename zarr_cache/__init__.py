@@ -20,6 +20,7 @@
 # SOFTWARE.
 
 from .index import MemoryStoreIndex
+from .index import RedisStoreIndex
 from .index import StoreIndex
 from .opener import MemoryStoreOpener
 from .opener import S3StoreOpener
