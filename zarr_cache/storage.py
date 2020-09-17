@@ -22,8 +22,10 @@
 import abc
 import collections
 import threading
+import time
 import warnings
-from typing import Dict, Optional
+from builtins import property
+from typing import Dict, Optional, Tuple
 
 import zarr.storage
 
@@ -31,6 +33,8 @@ from .index import StoreIndex
 from .opener import MemoryStoreOpener
 from .opener import StoreOpener
 from .util import close_store
+
+_NAN = float('nan')
 
 
 class CacheStorage(abc.ABC):
@@ -60,13 +64,14 @@ class CacheStorage(abc.ABC):
         """
 
     @abc.abstractmethod
-    def put_value(self, store_id: str, key: str, value: bytes):
+    def put_value(self, store_id: str, key: str, value: bytes, value_size: int = None):
         """
         Put a value into a store in the cache storage.
 
         :param store_id: The store identifier.
         :param key: The key.
         :param value: The value.
+        :param value_size: Optional value size, may be passed for optimization, if known.
         """
 
     @abc.abstractmethod
@@ -95,6 +100,39 @@ class CacheStorage(abc.ABC):
 
         :param store_id: The store identifier.
         """
+
+
+class CacheStorageDecorator(CacheStorage, abc.ABC):
+    """
+    A CacheStorage decorator wraps another (decorated) cache store to add some extra behaviour.
+
+    :param decorated_storage: The decorated cache storage.
+    """
+
+    def __init__(self, decorated_storage: CacheStorage):
+        self._decorated_storage = decorated_storage
+
+    @property
+    def decorated_storage(self):
+        return self._decorated_storage
+
+    def has_value(self, store_id: str, key: str) -> bool:
+        return self.decorated_storage.has_value(store_id, key)
+
+    def get_value(self, store_id: str, key: str) -> bytes:
+        return self.decorated_storage.get_value(store_id, key)
+
+    def put_value(self, store_id: str, key: str, value: bytes, value_size: int = None):
+        self.decorated_storage.put_value(store_id, key, value, value_size=value_size)
+
+    def delete_value(self, store_id: str, key: str) -> bool:
+        return self.decorated_storage.delete_value(store_id, key)
+
+    def delete_store(self, store_id: str):
+        self.decorated_storage.delete_store(store_id)
+
+    def close_store(self, store_id: str):
+        self.decorated_storage.close_store(store_id)
 
 
 class MemoryCacheStorage(CacheStorage):
@@ -127,7 +165,7 @@ class MemoryCacheStorage(CacheStorage):
     def get_value(self, store_id: str, key: str) -> bytes:
         return self._stores[store_id][key]
 
-    def put_value(self, store_id: str, key: str, value: bytes):
+    def put_value(self, store_id: str, key: str, value: bytes, value_size: int = None):
         if store_id not in self._stores:
             self._stores[store_id] = self._store_opener(store_id) if self._store_opener is not None else dict()
         self._stores[store_id][key] = value
@@ -220,9 +258,9 @@ class IndexedCacheStorage(CacheStorage):
             self._store_index.mark_key(store_id, key)
             return value
 
-    def put_value(self, store_id: str, key: str, value: bytes):
+    def put_value(self, store_id: str, key: str, value: bytes, value_size: int = None):
         # print(f'put_value: key={key}, typeof value={type(value)}')
-        value_size = zarr.storage.buffer_size(value)
+        value_size = zarr.storage.buffer_size(value) if value_size is None else value_size
         # check size of the value against max size, as if the value itself exceeds max
         # size then we are never going to cache it
         if self._max_size is None or value_size <= self._max_size:
@@ -278,3 +316,63 @@ class IndexedCacheStorage(CacheStorage):
                 warnings.warn(f'Failed to delete key {key} from store {store_id}')
                 continue
             current_size -= size
+
+
+class TimingCacheStorage(CacheStorageDecorator):
+    """
+    A CacheStorage decorator that performs a timing on its get_value, put_value, and delete_value methods.
+
+    :param decorated_storage: The decorated cache storage.
+    """
+
+    def __init__(self, decorated_storage: CacheStorage):
+        super().__init__(decorated_storage)
+        self._stats = dict(get_value=(0, 0, 0), put_value=(0, 0, 0), delete_value=(0, 0, 0))
+
+    @property
+    def get_value_stats(self) -> Tuple[float, float, float, int]:
+        return self._get_stats('get_value')
+
+    @property
+    def put_value_stats(self) -> Tuple[float, float, float, int]:
+        return self._get_stats('put_value')
+
+    @property
+    def delete_value_stats(self) -> Tuple[float, float, float, int]:
+        return self._get_stats('delete_value')
+
+    def _get_stats(self, method_name) -> Tuple[float, float, float, int]:
+        time_sum, size_sum, count = self._stats[method_name]
+        return size_sum / count if count > 0 else _NAN, \
+               time_sum / count if count > 0 else _NAN, \
+               size_sum / time_sum if time_sum > 0 else _NAN, \
+               count
+
+    def _update_stats(self, method_name, size_delta, time_delta):
+        size_sum, time_sum, count = self._stats[method_name]
+        self._stats[method_name] = size_sum + size_delta, time_sum + time_delta, count + 1
+
+    def get_value(self, store_id: str, key: str) -> bytes:
+        value_size = 0
+        t0 = time.perf_counter()
+        try:
+            value = super().get_value(store_id, key)
+            value_size = zarr.storage.buffer_size(value)
+            return value
+        finally:
+            self._update_stats('get_value', value_size, time.perf_counter() - t0)
+
+    def put_value(self, store_id: str, key: str, value: bytes, value_size: int = None):
+        value_size = zarr.storage.buffer_size(value) if value_size is None else value_size
+        t0 = time.perf_counter()
+        try:
+            super().put_value(store_id, key, value, value_size=value_size)
+        finally:
+            self._update_stats('put_value', value_size, time.perf_counter() - t0)
+
+    def delete_value(self, store_id: str, key: str) -> bool:
+        t0 = time.perf_counter()
+        try:
+            return super().delete_value(store_id, key)
+        finally:
+            self._update_stats('delete_value', 0, time.perf_counter() - t0)

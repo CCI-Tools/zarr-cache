@@ -25,8 +25,10 @@ from .opener import MemoryStoreOpener
 from .opener import S3StoreOpener
 from .opener import StoreOpener
 from .storage import CacheStorage
+from .storage import CacheStorageDecorator
 from .storage import IndexedCacheStorage
 from .storage import MemoryCacheStorage
+from .storage import TimingCacheStorage
 from .store import CachedStore
 from .store import StoreItemFilter
 from .version import __version__
